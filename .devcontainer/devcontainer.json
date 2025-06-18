@@ -1,0 +1,40 @@
+{
+  "name": "attention-influence",
+
+  "build": {
+    "context": "./",
+    "dockerfile": "Dockerfile",
+    "args": {
+      "BUILDKIT_INLINE_CACHE": "0"
+    }
+  },
+
+  "runArgs": ["--gpus", "all", "--runtime", "nvidia"],
+
+  "containerEnv": {
+    "PIP_USER": "0",
+    "CONDA_ENV_NAME": "ainfluence"
+  },
+
+  "postCreateCommand": "bash .devcontainer/scripts/init_conda.sh",
+
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "charliermarsh.ruff",
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "ms-toolsai.jupyter",
+        "ms-toolsai.jupyter-keymap",
+        "ms-toolsai.jupyter-renderers",
+        "ms-toolsai.vscode-jupyter-cell-tags",
+        "ms-toolsai.vscode-jupyter-slideshow",
+        "ms-vscode.cmake-tools",
+        "ms-vscode.cpptools-extension-pack",
+        "eamodio.gitlens",
+        "redhat.vscode-yaml",
+        "yzhang.markdown-all-in-one"
+      ]
+    }
+  }
+}
