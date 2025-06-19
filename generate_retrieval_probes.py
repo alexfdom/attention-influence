@@ -19,7 +19,7 @@ assert EOS < 2**16
 MAX_TOKENS_PER_PROBE = 4_096
 OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "data")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
-FILENAME = os.path.join(OUTPUT_DIR, "probes.jsonl")
+FILE_PATH = os.path.join(OUTPUT_DIR, "probes.jsonl")
 
 def n_tokens(text: str) -> int:
     return len(tok.encode(text, add_special_tokens=False))
@@ -92,7 +92,7 @@ if __name__ == "__main__":
     sentence_pool = [s for sublist in results for s in sublist]
     print(f"Collected {len(sentence_pool):,} candidate sentences.")
 
-    with open(f"{FILENAME}", "w", encoding="utf-8") as f:
+    with open(f"{FILE_PATH}", "w", encoding="utf-8") as f:
         for i in tqdm(range(800), desc="Generating probes"):
             probe = make_probe(i)
             f.write(json.dumps(probe, ensure_ascii=False) + "\n")
