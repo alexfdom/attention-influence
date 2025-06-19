@@ -6,7 +6,6 @@ __pycache__/
 
 *.bin
 *.pt
-*.txt
 
 ref_model/
 
