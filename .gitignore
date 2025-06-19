@@ -8,6 +8,5 @@ __pycache__/
 *.pt
 *.txt
 
-probes.jsonl
 ref_model/
 
