@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ENV_NAME="${CONDA_ENV_NAME}"
-ENV_FILE="$(pwd)/attention-influence/environment.yml"
+ENV_FILE="$(pwd)/environment.yml"
 
 echo "Creating / Updating Conda env '$ENV_NAME'…"
 if conda info --envs | grep -q "$ENV_NAME"; then
