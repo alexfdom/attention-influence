@@ -43,57 +43,80 @@ def read_shard(path: Union[str, Path]) -> torch.Tensor:
 
 
 def gen_docs(
-    pattern: str, eot_id: int
+    pattern: str,
+    eot_id: int,
+    *,
+    with_counter: bool = False,
 ) -> Generator[Tuple[str, torch.Tensor], None, None]:
     """
     Yield (doc_id, tokens) where each sequence ends with `eot_id`.
 
     ─ ID format ───────────────────────────────────────────────────────────
       single-shard :  <stem>:<start>-<end>
-      cross-shard  :  <stem1>:<start1>—<stem2>:<end2>
+      cross-shard  :  <stem1>:<start>-<end>—<stem2>:0-<end>
                       (the doc always starts at index 0 in the second shard)
     """
     tail: Optional[torch.Tensor] = None  # unfinished doc carried forward
     tail_stem: Optional[str] = None      # first shard’s stem
     tail_start: Optional[int] = None     # start idx in first shard
 
+    num_toks_seen = 0
+
     for shard_path in sorted(glob.glob(pattern)):
         shard_tokens = read_shard(shard_path)
+        if shard_tokens.numel() == 0:
+            continue
         stem = os.path.splitext(os.path.basename(shard_path))[0]
 
         if tail is not None:
             offset = len(tail)
+            if tail.device != shard_tokens.device:
+                tail = tail.to(shard_tokens.device)
             shard_tokens = torch.cat((tail, shard_tokens))
         else:
             offset = 0
 
+        eot_positions = torch.where(shard_tokens == eot_id)[0].tolist()
         pos = 0
-        while pos < len(shard_tokens):
-            try:
-                nxt = (shard_tokens[pos:] == eot_id).nonzero(as_tuple=True)[0][
-                    0
-                ].item() + pos
-            except IndexError:
-                # no EOT in the remainder → save the remaining tokens in the variable tail
-                tail, tail_stem, tail_start = (
-                    shard_tokens[pos:],
-                    tail_stem or stem,
-                    tail_start if tail_start is not None else pos - offset,
-                )
-                break
 
+        for nxt in eot_positions:
             if offset == 0:  # whole doc inside this shard
                 doc_id = f"{stem}:{pos}-{nxt}"
             else:  # spans two shards
-                doc_id = f"{tail_stem}:{tail_start}—{stem}:{nxt - offset}"
+                end1 = tail_start + offset - 1
+                end2 = nxt - offset
+                doc_id = f"{tail_stem}:{tail_start}-{end1}—{stem}:0-{end2}"
+                # Reset cross-shard bookkeeping
                 tail = tail_stem = tail_start = None
-                offset = 0  # reset for rest of this shard
+                offset = 0
 
-            yield doc_id, shard_tokens[pos : nxt + 1]
+            tokens_slice = shard_tokens[pos : nxt + 1]
+            num_toks_seen += len(tokens_slice)
+
+            if with_counter:
+                yield doc_id, tokens_slice, num_toks_seen
+            else:
+                yield doc_id, tokens_slice
+
             pos = nxt + 1
 
+        # Anything after the last EOT becomes the next shard’s tail
+        if pos < len(shard_tokens):
+            tail = shard_tokens[pos:]
+            if tail_stem is None:
+                tail_stem = stem
+                tail_start = pos
+        else:
+            tail = tail_stem = tail_start = None
+
     if tail is not None and len(tail):
-        yield f"{tail_stem}:{tail_start}—{tail_stem}:EOF", tail
+        end1 = tail_start + len(tail) - 1
+        doc_id = f"{tail_stem}:{tail_start}-{end1}—{tail_stem}:EOF"
+        num_toks_seen += len(tail)
+        if with_counter:
+            yield doc_id, tail, num_toks_seen
+        else:
+            yield doc_id, tail
 
 
 def ce_loss(model, ids: torch.Tensor) -> torch.Tensor:
@@ -134,11 +157,13 @@ if __name__ == "__main__":
     if rank == 0:
         Path(args.out).parent.mkdir(parents=True, exist_ok=True)
         out_f = open(args.out, "w", encoding="utf-8")
-        out_f.write("doc_id\tL_base\tL_ref\tAI_Score\n")
+        out_f.write("doc_id\tL_base\tL_ref\tAI_Score\ttotal_tokens_seen\n")
     else:
         out_f = None
 
-    for doc_id, tok_buf in tqdm(gen_docs(args.data, EOT), disable=rank != 0):
+    for doc_id, tok_buf, num_toks_seen in tqdm(
+        gen_docs(args.data, EOT, with_counter=True), disable=rank != 0
+    ):
         Lb = Lr = 0.0
         for i in range(0, len(tok_buf) - 1, args.seq_len):
             chunk = tok_buf[i : i + args.seq_len + 1].to(device, torch.long)
@@ -155,7 +180,7 @@ if __name__ == "__main__":
         attention_influence_score = (Lr - Lb) / max(Lb, 1e-12)
         if rank == 0:
             out_f.write(
-                f"{doc_id}\t{Lb:.4f}\t{Lr:.4f}\t{attention_influence_score:.6f}\n"
+                f"{doc_id}\t{Lb:.4f}\t{Lr:.4f}\t{attention_influence_score:.6f}\t{num_toks_seen}\n"
             )
 
     if rank == 0:
