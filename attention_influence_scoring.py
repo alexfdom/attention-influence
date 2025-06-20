@@ -9,6 +9,7 @@ import torch
 from tqdm.auto import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer
 import torch.distributed as dist
+import polars as pl
 
 MAGIC, VERSION = 20240520, 1
 HEADER_BYTES = 256 * 4
@@ -57,8 +58,8 @@ def gen_docs(
                       (the doc always starts at index 0 in the second shard)
     """
     tail: Optional[torch.Tensor] = None  # unfinished doc carried forward
-    tail_stem: Optional[str] = None      # first shard’s stem
-    tail_start: Optional[int] = None     # start idx in first shard
+    tail_stem: Optional[str] = None  # first shard’s stem
+    tail_start: Optional[int] = None  # start idx in first shard
 
     num_toks_seen = 0
 
@@ -137,6 +138,12 @@ if __name__ == "__main__":
     p.add_argument("--seq_len", type=int, default=4096)
     p.add_argument("--device", default="cuda")
     p.add_argument("--out", default="data/ai_scores.tsv")
+    p.add_argument(
+        "--max_tokens",
+        type=lambda s: int(s.replace("_", "")),
+        default=None,
+        help="stop after this many total tokens seen (underscores allowed, e.g. 10_000_000)",
+    )
     args = p.parse_args()
 
     rank = int(os.getenv("RANK", 0))
@@ -158,6 +165,8 @@ if __name__ == "__main__":
         Path(args.out).parent.mkdir(parents=True, exist_ok=True)
         out_f = open(args.out, "w", encoding="utf-8")
         out_f.write("doc_id\tL_base\tL_ref\tAI_Score\ttotal_tokens_seen\n")
+
+        rows = []
     else:
         out_f = None
 
@@ -182,8 +191,22 @@ if __name__ == "__main__":
             out_f.write(
                 f"{doc_id}\t{Lb:.4f}\t{Lr:.4f}\t{attention_influence_score:.6f}\t{num_toks_seen}\n"
             )
+            row = {
+                "doc_id": doc_id,
+                "L_base": round(Lb, 4),
+                "L_ref": round(Lr, 4),
+                "AI_Score": round(attention_influence_score, 6),
+                "total_tokens_seen": num_toks_seen,
+            }
+            rows.append(row)
+
+            if args.max_tokens is not None and num_toks_seen >= args.max_tokens:
+                break
 
     if rank == 0:
         out_f.close()
+        parquet_path = Path(args.out).with_suffix(".parquet")
+        pl.DataFrame(rows).write_parquet(parquet_path)
+        print(f"✓ wrote {parquet_path} (and TSV)")
     if world > 1:
         dist.barrier()
