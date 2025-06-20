@@ -10,4 +10,8 @@ __pycache__/
 base-model/
 reference-model/
 
+ai_scores.parquet
+ai_scores.tsv
 
+top*.parquet
+top*.tsv
