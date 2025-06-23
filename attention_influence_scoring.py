@@ -71,18 +71,19 @@ def gen_docs(
 
         if tail is not None:
             offset = len(tail)
+            base_offset = offset
             if tail.device != shard_tokens.device:
                 tail = tail.to(shard_tokens.device)
             shard_tokens = torch.cat((tail, shard_tokens))
         else:
-            offset = 0
+            offset = base_offset = 0
 
         eot_positions = torch.where(shard_tokens == eot_id)[0].tolist()
         pos = 0
 
         for nxt in eot_positions:
             if offset == 0:  # whole doc inside this shard
-                doc_id = f"{stem}:{pos}-{nxt}"
+                doc_id = f"{stem}:{pos - base_offset}-{nxt - base_offset}"
             else:  # spans two shards
                 end1 = tail_start + offset - 1
                 end2 = nxt - offset
@@ -94,19 +95,17 @@ def gen_docs(
             tokens_slice = shard_tokens[pos : nxt + 1]
             num_toks_seen += len(tokens_slice)
 
-            if with_counter:
-                yield doc_id, tokens_slice, num_toks_seen
-            else:
-                yield doc_id, tokens_slice
+            yield (doc_id, tokens_slice, num_toks_seen) if with_counter else (
+                doc_id,
+                tokens_slice,
+            )
 
             pos = nxt + 1
 
-        # Anything after the last EOT becomes the next shard’s tail
         if pos < len(shard_tokens):
             tail = shard_tokens[pos:]
             if tail_stem is None:
-                tail_stem = stem
-                tail_start = pos
+                tail_stem, tail_start = stem, pos - base_offset
         else:
             tail = tail_stem = tail_start = None
 
@@ -114,10 +113,7 @@ def gen_docs(
         end1 = tail_start + len(tail) - 1
         doc_id = f"{tail_stem}:{tail_start}-{end1}—{tail_stem}:EOF"
         num_toks_seen += len(tail)
-        if with_counter:
-            yield doc_id, tail, num_toks_seen
-        else:
-            yield doc_id, tail
+        yield (doc_id, tail, num_toks_seen) if with_counter else (doc_id, tail)
 
 
 def ce_loss(model, ids: torch.Tensor) -> torch.Tensor:
