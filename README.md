@@ -76,7 +76,8 @@ At a glance: **Baseline clean data** + **top-20 % AI-scored subset** → sample 
 5. **Select top‑k** (e.g. top 20 % per domain):
 
    ```bash
-   python rank_scores.py --scores data/ai_scores.tsv \
+   python rank_scores.py \
+         --scores data/ai_scores.tsv \
    		--top_pct 20
    ```
 
@@ -110,15 +111,15 @@ At a glance: **Baseline clean data** + **top-20 % AI-scored subset** → sample 
 
 - [AttentionInfluence: Adopting Attention Head Influence for Weak-to-Strong Pretraining Data Selection](https://arxiv.org/abs/2505.07293)
 
-```txt
-@misc{hua2025attentioninfluence,
-  title        = {AttentionInfluence: Adopting Attention Head Influence for Weak-to-Strong Pretraining Data Selection},
-  author       = {Kai Hua and Steven Wu and Ge Zhang and Ke Shen},
-  year         = {2025},
-  eprint       = {2505.07293},
-  archivePrefix= {arXiv},
-  primaryClass = {cs.CL},
-  url          = {https://arxiv.org/abs/2505.07293},
-}
-```
+   ```txt
+   @misc{hua2025attentioninfluence,
+   title        = {AttentionInfluence: Adopting Attention Head Influence for Weak-to-Strong Pretraining Data Selection},
+   author       = {Kai Hua and Steven Wu and Ge Zhang and Ke Shen},
+   year         = {2025},
+   eprint       = {2505.07293},
+   archivePrefix= {arXiv},
+   primaryClass = {cs.CL},
+   url          = {https://arxiv.org/abs/2505.07293},
+   }
+   ```
 
