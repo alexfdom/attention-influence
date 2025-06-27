@@ -41,7 +41,7 @@ At a glance: **Baseline clean data** + **top-20 % AI-scored subset** → sample 
 
    ```bash
    python make_reference_model.py \
-       --base hfl/chinese-llama-2-1.3b \
+       --base_model hfl/chinese-llama-2-1.3b \
        --retrieval_heads data/retrieval_heads.txt
    ```
 
@@ -61,8 +61,8 @@ At a glance: **Baseline clean data** + **top-20 % AI-scored subset** → sample 
 
    ```bash
    python attention_influence_scoring.py \
-       --base hfl/chinese-llama-2-1.3b \
-       --reference reference-model \
+       --base_model hfl/chinese-llama-2-1.3b \
+       --reference_model reference-model \
        --data 'data/fineweb10B/fineweb_train_*.bin' \
        --seq_len 4096
    ```
@@ -77,8 +77,8 @@ At a glance: **Baseline clean data** + **top-20 % AI-scored subset** → sample 
 
    ```bash
    python rank_scores.py \
-         --scores data/ai_scores.tsv \
-   		--top_pct 20
+       --scores data/ai_scores.tsv \
+       --top_pct 20
    ```
 
    Outputs:
