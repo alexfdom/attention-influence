@@ -1,3 +1,4 @@
+from config import logger
 import argparse
 import math
 from pathlib import Path
@@ -9,6 +10,7 @@ p.add_argument("--top_pct", type=float, default=20.0)
 p.add_argument("--bottom_pct", type=float, default=None)
 args = p.parse_args()
 
+logger.info(f"Reading scores from: {args.scores}")
 df = pl.read_csv(args.scores, separator="\t")
 
 df = df.with_columns(
@@ -22,6 +24,7 @@ df = df.with_columns(
 k = math.ceil(df.height * (args.bottom_pct if args.bottom_pct is not None else args.top_pct) / 100)
 
 if args.bottom_pct is None:
+    logger.info(f"Selecting top {args.top_pct:.1f}% documents by AI_Score (k={k})")
     selected_k = (
         df.sort("AI_Score", descending=True)
         .head(k)
@@ -31,6 +34,7 @@ if args.bottom_pct is None:
     selected = "Top"
     file_prefix = f"top{int(percent)}"
 else:
+    logger.info(f"Selecting bottom {args.bottom_pct:.1f}% documents by AI_Score (k={k})")
     selected_k = (
         df.sort("AI_Score", descending=False)
         .head(k)
@@ -49,7 +53,7 @@ out_path.parent.mkdir(parents=True, exist_ok=True)
 selected_k.write_csv(out_path, separator="\t")
 selected_k.write_parquet(f"data/{file_prefix}.parquet")
 
-print(
+logger.info(
     f"✓ wrote {out_path}  "
     f"{selected} {percent}% Attention Influence Score "
     f"(k={k} docs, {tokens_in_selected:,} tokens ≈ {pct_tokens:.2f}% "
