@@ -1,0 +1,20 @@
+---
+data:
+  # base data directory (relative to the repo root)
+  dir: data
+
+  probes: probes.jsonl
+  retrieval_heads: retrieval_heads.txt
+
+generation:
+  num_probes: 800
+  hash_key_length: 32
+
+tokenizer:
+  model_name: hfl/chinese-llama-2-1.3b
+  use_fast: true
+  trust_remote_code: true
+
+budget:
+  max_tokens_per_probe: 4096
+

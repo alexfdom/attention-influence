@@ -1,32 +1,43 @@
 from __future__ import annotations
 import os
+import yaml
+import string
 import random
-import uuid
 from transformers import AutoTokenizer
 from datasets import load_dataset
 import pysbd
+from dataclasses import dataclass
+from functools import partial
 import multiprocessing as mp
 from tqdm import tqdm
 import json
 
+with open("config.yml", encoding="utf-8") as f:
+    config = yaml.safe_load(f)
+
 random.seed(42)
-tok = AutoTokenizer.from_pretrained(
+
+TOK = AutoTokenizer.from_pretrained(
     "hfl/chinese-llama-2-1.3b", use_fast=True, trust_remote_code=True
 )
-EOS = tok.eos_token_id
+EOS = TOK.eos_token_id
 assert EOS < 2**16
+MAX_TOKENS_PER_PROBE = config["budget"]["max_tokens_per_probe"]
 
-MAX_TOKENS_PER_PROBE = 4_096
-OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "data")
+NUM_PROBES = config["generation"]["num_probes"]
+HASH_KEY_LENGHT = config["generation"]["hash_key_length"]
+
+OUTPUT_DIR = os.path.join(os.path.dirname(__file__), config["data"]["dir"])
 os.makedirs(OUTPUT_DIR, exist_ok=True)
-FILE_PATH = os.path.join(OUTPUT_DIR, "probes.jsonl")
+FILE_PATH = os.path.join(OUTPUT_DIR, config["data"]["probes"])
+
 
 def n_tokens(text: str) -> int:
-    return len(tok.encode(text, add_special_tokens=False))
+    return len(TOK.encode(text, add_special_tokens=False))
 
-def process_doc(doc):
+
+def process_doc(doc: dict, seg: pysbd.Segmenter) -> list[str]:
     try:
-        seg = pysbd.Segmenter(language="en", clean=True)
         selected_sentences = []
         for sent in seg.segment(doc["text"]):
             s = sent.strip()
@@ -37,23 +48,32 @@ def process_doc(doc):
     except Exception:
         return []
 
-def rand_key() -> str:
-    """Return a 32-char mixed-alnum key."""
-    return uuid.uuid4().hex + uuid.uuid4().hex[:16]
+
+def rand_key(length: int = 32) -> str:
+    """Return a random mixed-alphanumeric key of the given length."""
+    alphabet = string.ascii_letters + string.digits
+    return "".join(random.choice(alphabet) for _ in range(length))
 
 
-def build_context(k: int) -> dict[str, str]:
+def _build_context(k: int, pool: list[str]) -> dict[str, str]:
     """Return a dict with k unique random keys and sentences."""
-    keys = {rand_key() for _ in range(k)}
-    vals = random.sample(sentence_pool, k)
+    keys = {rand_key(HASH_KEY_LENGHT) for _ in range(k)}
+    vals = random.sample(pool, k)
     return dict(zip(keys, vals))
 
 
-def make_probe(probe_id: int) -> dict:
+@dataclass
+class Probe:
+    id: int
+    prompt: str
+    answer: str
+
+
+def make_probe(probe_id: int, pool: list[str]) -> Probe:
     """Assemble one probe; fall back to smaller `k` until <= 4 096 token budget."""
 
     for k in range(60, 29, -5):
-        ctx = build_context(k)
+        ctx = _build_context(k, pool)
         keys = list(ctx.keys())
         demo_keys = random.sample(keys, 4)  # 3 demos + 1 query
         q1, q2, q3, q_query = demo_keys
@@ -72,7 +92,7 @@ def make_probe(probe_id: int) -> dict:
         )
         # token budget check
         if n_tokens(prompt) + 1 <= MAX_TOKENS_PER_PROBE:
-            return {"id": probe_id, "prompt": prompt, "answer": ctx[q_query]}
+            return Probe(id=probe_id, prompt=prompt, answer=ctx[q_query])
 
     raise RuntimeError("Could not fit a probe under the 4 096-token cap.")
 
@@ -83,18 +103,21 @@ if __name__ == "__main__":
     docs = list(web)
     print(f"Loaded {len(docs)} documents.")
 
-    seg = pysbd.Segmenter(language="en", clean=False)
+    SEG = pysbd.Segmenter(language="en", clean=False)
     sentence_pool: list[str] = []
 
+    worker_task = partial(process_doc, seg=SEG)
     with mp.Pool(processes=mp.cpu_count() - 2) as pool:
-        results = list(tqdm(pool.imap(process_doc, docs, chunksize=100), total=len(docs)))
+        results = list(
+            tqdm(pool.imap(worker_task, docs, chunksize=100), total=len(docs))
+        )
 
     sentence_pool = [s for sublist in results for s in sublist]
     print(f"Collected {len(sentence_pool):,} candidate sentences.")
 
-    with open(f"{FILE_PATH}", "w", encoding="utf-8") as f:
-        for i in tqdm(range(800), desc="Generating probes"):
-            probe = make_probe(i)
-            f.write(json.dumps(probe, ensure_ascii=False) + "\n")
+    with open(FILE_PATH, "w", encoding="utf-8") as f:
+        for i in tqdm(range(NUM_PROBES), desc="Generating probes"):
+            probe = make_probe(i, sentence_pool)
+            f.write(json.dumps(probe.__dict__, ensure_ascii=False) + "\n")
 
-    print("Done → probes.jsonl (800 lines)")
+    print(f"Done → probes.jsonl ({NUM_PROBES} lines)")
