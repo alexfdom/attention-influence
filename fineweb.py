@@ -1,5 +1,6 @@
 # Adapted from https://github.com/KellerJordan/modded-nanogpt/blob/e86686b304b7ab0b00e815bb1ac8c43eb632f1d4/data/fineweb.py
 # Changes:
+#   - Added centralized logger for consistent logging 
 #   - Tokenizer switched to 'hfl/chinese-llama-2-1.3b' to ensure consistency for both the retrieval heads and inference.
 #   - Output → ./data/
 """
@@ -19,12 +20,11 @@ example doc to highlight the structure of the dataset:
   "token_count": 594
 }
 """
-
+from config import logger, TOK, EOS
 import os
 import argparse
 import multiprocessing as mp
 import numpy as np
-from transformers import AutoTokenizer
 
 # from huggingface_hub import snapshot_download
 from datasets import load_dataset
@@ -59,7 +59,7 @@ def write_datafile(filename: str, toks: Sequence[int] | NDArray[np.uint16]):
     else:
         toks_np = toks
     # write to file
-    print(f"writing {len(toks):,} tokens to {filename}")
+    logger.info(f"writing {len(toks):,} tokens to {filename}")
     with open(filename, "wb") as f:
         f.write(header.tobytes())
         f.write(toks_np.tobytes())
@@ -82,6 +82,7 @@ args = parser.parse_args()
 
 # FineWeb has a few possible subsamples available
 assert args.version in ["10B", "100B"], "version must be one of 10B, 100B"
+logger.info("Selected FineWeb version: %s", args.version)
 if args.version == "10B":
     local_dir = "fineweb10B"
     remote_name = "sample-10BT"
@@ -94,18 +95,14 @@ DATA_CACHE_DIR = os.path.join(os.path.dirname(__file__), "data", local_dir)
 os.makedirs(DATA_CACHE_DIR, exist_ok=True)
 
 # download the dataset
+logger.info("Loading dataset: HuggingFaceFW/fineweb (%s)", remote_name)
 fw = load_dataset("HuggingFaceFW/fineweb", name=remote_name, split="train")
-
-# init the tokenizer
-tok = AutoTokenizer.from_pretrained("hfl/chinese-llama-2-1.3b", use_fast=True)
-EOS = tok.eos_token_id
-assert EOS < 2**16
 
 
 def tokenize(doc: Dict[str, Any]) -> NDArray[np.uint16]:
     # tokenizes a single document and returns a numpy array of uint16 tokens
     tokens = []
-    tokens.extend(tok.encode(doc["text"], add_special_tokens=False) + [EOS])
+    tokens.extend(TOK.encode(doc["text"], add_special_tokens=False) + [EOS])
     tokens_np = np.array(tokens)
     assert (0 <= tokens_np).all() and (tokens_np < 2**16).all(), (
         "token dictionary too large for uint16"
@@ -116,40 +113,46 @@ def tokenize(doc: Dict[str, Any]) -> NDArray[np.uint16]:
 
 # tokenize all documents and write output shards, each of shard_size tokens (last shard has remainder)
 nprocs = max(1, os.cpu_count() - 2)  # don't hog the entire system
+logger.info("Starting tokenization using %d processes", nprocs)
 with mp.Pool(nprocs) as pool:
     shard_index = 0
     # preallocate buffer to hold current shard
     all_tokens_np = np.empty((args.shard_size,), dtype=np.uint16)
     token_count = 0
     progress_bar = None
-    for tokens in pool.imap(tokenize, fw, chunksize=16):
-        # is there enough space in the current shard for the new tokens?
-        if token_count + len(tokens) < args.shard_size:
-            # simply append tokens to current shard
-            all_tokens_np[token_count : token_count + len(tokens)] = tokens
-            token_count += len(tokens)
-            # update progress bar
-            if progress_bar is None:
-                progress_bar = tqdm(
-                    total=args.shard_size, unit="tokens", desc=f"Shard {shard_index}"
+    try:
+        for tokens in pool.imap(tokenize, fw, chunksize=16):
+            # is there enough space in the current shard for the new tokens?
+            if token_count + len(tokens) < args.shard_size:
+                # simply append tokens to current shard
+                all_tokens_np[token_count : token_count + len(tokens)] = tokens
+                token_count += len(tokens)
+                # update progress bar
+                if progress_bar is None:
+                    progress_bar = tqdm(
+                        total=args.shard_size, unit="tokens", desc=f"Shard {shard_index}"
+                    )
+                progress_bar.update(len(tokens))
+            else:
+                # write the current shard and start a new one
+                split = "val" if shard_index == 0 else "train"
+                filename = os.path.join(
+                    DATA_CACHE_DIR, f"fineweb_{split}_{shard_index:06d}.bin"
                 )
-            progress_bar.update(len(tokens))
-        else:
-            # write the current shard and start a new one
-            split = "val" if shard_index == 0 else "train"
-            filename = os.path.join(
-                DATA_CACHE_DIR, f"fineweb_{split}_{shard_index:06d}.bin"
-            )
-            # split the document into whatever fits in this shard; the remainder goes to next one
-            remainder = args.shard_size - token_count
-            progress_bar.update(remainder)
-            all_tokens_np[token_count : token_count + remainder] = tokens[:remainder]
-            write_datafile(filename, all_tokens_np)
-            shard_index += 1
-            progress_bar = None
-            # populate the next shard with the leftovers of the current doc
-            all_tokens_np[0 : len(tokens) - remainder] = tokens[remainder:]
-            token_count = len(tokens) - remainder
+                logger.info("Writing shard %d to file: %s", shard_index, filename)
+                # split the document into whatever fits in this shard; the remainder goes to next one
+                remainder = args.shard_size - token_count
+                progress_bar.update(remainder)
+                all_tokens_np[token_count : token_count + remainder] = tokens[:remainder]
+                write_datafile(filename, all_tokens_np)
+                shard_index += 1
+                progress_bar = None
+                # populate the next shard with the leftovers of the current doc
+                all_tokens_np[0 : len(tokens) - remainder] = tokens[remainder:]
+                token_count = len(tokens) - remainder
+    except Exception as e:
+        logger.error("Tokenization failed: %s", str(e))
+        raise
 
     # write any remaining tokens as the last shard
     if token_count != 0:
@@ -157,4 +160,5 @@ with mp.Pool(nprocs) as pool:
         filename = os.path.join(
             DATA_CACHE_DIR, f"fineweb_{split}_{shard_index:06d}.bin"
         )
+        logger.info("Writing final shard (%d tokens) to file: %s", token_count, filename)
         write_datafile(filename, all_tokens_np[:token_count])
