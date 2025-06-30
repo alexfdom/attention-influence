@@ -1,3 +1,4 @@
+from config import logger
 from pathlib import Path
 import argparse
 import torch
@@ -78,11 +79,14 @@ def main() -> None:
 
     device = torch.device(args.device)
 
+    logger.info(f"Loading base model from: {args.base_model}")
     base = load_ckpt(args.base_model, device)
+    logger.info(f"Loading base model from: {args.base_model}")
     ref = load_ckpt(args.reference_model, device)
     tokzr = AutoTokenizer.from_pretrained(args.base_model, use_fast=True)
     bos_id = tokzr.bos_token_id or tokzr.cls_token_id or None
 
+    logger.info(f"Retrieving tokens for document ID: {args.doc_id}")
     tokens = get_tokens(args.doc_id)
     Lb = Lr = 0.0
 
@@ -95,12 +99,12 @@ def main() -> None:
 
     ai_score = (Lr - Lb) / max(Lb, 1e-12)
 
-    print(f"Tokens       : {tokens.numel()}")
-    print(f"L_base     : {Lb:.4f}")
-    print(f"L_ref      : {Lr:.4f}")
-    print(f"AI score     : {ai_score:.6f}\n")
-    print("Document ↓")
-    print(tokzr.decode(tokens))
+    logger.info(f"Tokens       : {tokens.numel()}")
+    logger.info(f"L_base     : {Lb:.4f}")
+    logger.info(f"L_ref      : {Lr:.4f}")
+    logger.info(f"AI score     : {ai_score:.6f}\n")
+    logger.info("Document ↓")
+    logger.info(tokzr.decode(tokens))
 
 
 if __name__ == "__main__":
