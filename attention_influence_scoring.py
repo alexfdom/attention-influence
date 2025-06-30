@@ -1,3 +1,4 @@
+from config import logger
 import argparse
 from pathlib import Path
 import os
@@ -116,7 +117,7 @@ def gen_docs(
         yield (doc_id, tail, num_toks_seen) if with_counter else (doc_id, tail)
 
 
-def ce_loss(model, ids: torch.Tensor) -> torch.Tensor:
+def ce_loss(model, ids: torch.Tensor, bos_id: Optional[int]) -> torch.Tensor:
     if bos_id is not None and ids[0] != bos_id:
         bos = torch.tensor([bos_id], device=ids.device, dtype=torch.long)
         ids = torch.cat([bos, ids])
@@ -141,6 +142,7 @@ if __name__ == "__main__":
         help="stop after this many total tokens seen (underscores allowed, e.g. 10_000_000)",
     )
     args = p.parse_args()
+    logger.info("Starting attention influence scoring...")
 
     rank = int(os.getenv("RANK", 0))
     world = int(os.getenv("WORLD_SIZE", 1))
@@ -149,9 +151,14 @@ if __name__ == "__main__":
     torch.cuda.set_device(int(os.getenv("LOCAL_RANK", 0)))
 
     device = torch.device(args.device)
+
+    logger.info(f"Loading base model from: {args.base_model}")
     base_model = load_ckpt(args.base_model, device)
+
+    logger.info(f"Loading reference model from: {args.reference_model}")
     reference_model = load_ckpt(args.reference_model, device)
-    tokenizer = AutoTokenizer.from_pretrained("hfl/chinese-llama-2-1.3b", use_fast=True)
+    logger.info(f"Loading tokenizer: {args.base_model}")
+    tokenizer = AutoTokenizer.from_pretrained(args.base_model, use_fast=True, trust_remote_code=True)
     bos_id = tokenizer.bos_token_id or tokenizer.cls_token_id or None
 
     EOT = tokenizer.eos_token_id
@@ -166,16 +173,18 @@ if __name__ == "__main__":
     else:
         out_f = None
 
+    logger.info(f"Creating output TSV at: {args.out}")
     for doc_id, tok_buf, num_toks_seen in tqdm(
         gen_docs(args.data, EOT, with_counter=True), disable=rank != 0
     ):
+        logger.debug(f"Scoring document: {doc_id} with {len(tok_buf)} tokens")
         Lb = Lr = 0.0
         for i in range(0, len(tok_buf) - 1, args.seq_len):
             chunk = tok_buf[i : i + args.seq_len + 1].to(device, torch.long)
             if len(chunk) < 2:
                 break
-            Lb += ce_loss(base_model, chunk).item()
-            Lr += ce_loss(reference_model, chunk).item()
+            Lb += ce_loss(base_model, chunk, bos_id).item()
+            Lr += ce_loss(reference_model, chunk, bos_id).item()
 
         if world > 1:
             tensor = torch.tensor([Lb, Lr], device=device)
@@ -202,7 +211,8 @@ if __name__ == "__main__":
     if rank == 0:
         out_f.close()
         parquet_path = Path(args.out).with_suffix(".parquet")
+        logger.info(f"Scoring complete. Writing parquet file: {parquet_path}")
         pl.DataFrame(rows).write_parquet(parquet_path)
-        print(f"✓ wrote {parquet_path} (and TSV)")
+        logger.info(f"✓ wrote {parquet_path} (and TSV)")
     if world > 1:
         dist.barrier()
