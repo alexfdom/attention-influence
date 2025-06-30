@@ -8,12 +8,15 @@ import copy
 import random
 from transformers import AutoTokenizer
 
-with open("config.yml", "r") as f:
-    config = yaml.safe_load(f)
+try:
+    with open("config.yml", "r") as f:
+        config = yaml.safe_load(f)
+except FileNotFoundError:
+    print("Error: config.yml not found. Please ensure it's in the same directory as the script.")
 
-log_dir = os.path.join(os.path.dirname(__file__), config["data"]["dir"])
+LOG_DIR = os.path.join(os.path.dirname(__file__), config["data"]["dir"])
 
-def setup_logger(config: dict[str, Any], log_dir: str = log_dir, log_file: str = "pipeline.log", logger_name: str = "central_pipeline_logger") -> logging.Logger:
+def setup_logger(config: dict[str, Any], log_dir: str = LOG_DIR, log_file: str = "pipeline.log", logger_name: str = "central_pipeline_logger") -> logging.Logger:
     log_cfg = copy.deepcopy(config.get("logger_config", {}))
 
     handlers_cfg = log_cfg.get("handlers", {})
@@ -27,7 +30,7 @@ def setup_logger(config: dict[str, Any], log_dir: str = log_dir, log_file: str =
     logging.config.dictConfig(log_cfg)
 
     logger = logging.getLogger(logger_name)
-    logger.info(f"Logger '{logger_name}' initialized, logging to directory: {log_dir}")
+    logger.debug(f"Logger '{logger_name}' initialized, logging to directory: {log_dir}")
 
     return logger
 
@@ -50,6 +53,8 @@ HASH_KEY_LENGHT = config["generation"]["hash_key_length"]
 OUTPUT_DIR = os.path.join(os.path.dirname(__file__), config["data"]["dir"])
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 FILE_PATH_PROBES = os.path.join(OUTPUT_DIR, config["data"]["probes"])
+FILE_PATH_RETRIEVAL_HEADS = os.path.join(OUTPUT_DIR, config["data"]["retrieval_heads"])
 
 logger = setup_logger(config, log_dir=OUTPUT_DIR)
-logger.info("Config and logger initialized successfully")
+logger.debug(f"Tokenizer initialized: {tokenizer_config.get('model_name', 'hfl/chinese-llama-2-1.3b')}")
+logger.debug("Config and logger initialized successfully")
