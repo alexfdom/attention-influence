@@ -18,3 +18,27 @@ tokenizer:
 budget:
   max_tokens_per_probe: 4096
 
+logger_config:
+  version: 1
+  disable_existing_loggers: False
+  formatters:
+    standard:
+      format: "%(asctime)s - %(levelname)s - %(name)s - %(module)s - %(message)s"
+  handlers:
+    console:
+      class: logging.StreamHandler
+      formatter: standard
+      level: INFO
+    file:
+      class: logging.FileHandler
+      formatter: standard
+      filename: "pipeline.log"
+      level: INFO
+  loggers:
+    __main__:
+      handlers: [console]
+      level: INFO
+      propagate: False
+  root:
+    handlers: [console, file]
+    level: INFO

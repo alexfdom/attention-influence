@@ -1,6 +1,13 @@
 from __future__ import annotations
-import os
-import yaml
+from config import (
+    logger,
+    TOK,
+    EOS,
+    MAX_TOKENS_PER_PROBE,
+    NUM_PROBES,
+    HASH_KEY_LENGHT,
+    FILE_PATH_PROBES,
+)
 import string
 import random
 from transformers import AutoTokenizer
@@ -12,25 +19,9 @@ import multiprocessing as mp
 from tqdm import tqdm
 import json
 
-with open("config.yml", encoding="utf-8") as f:
-    config = yaml.safe_load(f)
-
-random.seed(42)
-
-TOK = AutoTokenizer.from_pretrained(
-    "hfl/chinese-llama-2-1.3b", use_fast=True, trust_remote_code=True
-)
-EOS = TOK.eos_token_id
-assert EOS < 2**16
-MAX_TOKENS_PER_PROBE = config["budget"]["max_tokens_per_probe"]
-
-NUM_PROBES = config["generation"]["num_probes"]
-HASH_KEY_LENGHT = config["generation"]["hash_key_length"]
-
-OUTPUT_DIR = os.path.join(os.path.dirname(__file__), config["data"]["dir"])
-os.makedirs(OUTPUT_DIR, exist_ok=True)
-FILE_PATH = os.path.join(OUTPUT_DIR, config["data"]["probes"])
-
+logger.info("Tokenizer initialized (EOS token ID: %d)", EOS)
+logger.info("Max tokens per probe: %d", MAX_TOKENS_PER_PROBE)
+logger.info("Output file will be saved to: %s", FILE_PATH_PROBES)
 
 def n_tokens(text: str) -> int:
     return len(TOK.encode(text, add_special_tokens=False))
@@ -45,7 +36,8 @@ def process_doc(doc: dict, seg: pysbd.Segmenter) -> list[str]:
             if 5 <= n_tok <= 30:
                 selected_sentences.append(s)
         return selected_sentences
-    except Exception:
+    except Exception as e:
+        logger.warning("Error processing document: %s", e)
         return []
 
 
@@ -93,19 +85,21 @@ def make_probe(probe_id: int, pool: list[str]) -> Probe:
         # token budget check
         if n_tokens(prompt) + 1 <= MAX_TOKENS_PER_PROBE:
             return Probe(id=probe_id, prompt=prompt, answer=ctx[q_query])
-
+        
+    logger.error("Probe %d could not fit within the token budget.", probe_id)
     raise RuntimeError("Could not fit a probe under the 4 096-token cap.")
 
 
 if __name__ == "__main__":
-    print("Loading WebText sentences …")
+    logger.info("Loading WebText sentences …")
     web = load_dataset("stas/openwebtext-10k", split="train")
     docs = list(web)
-    print(f"Loaded {len(docs)} documents.")
+    logger.info("Loaded %d documents.", len(docs))
 
     SEG = pysbd.Segmenter(language="en", clean=False)
     sentence_pool: list[str] = []
 
+    logger.info("Segmenting sentences using multiprocessing …")
     worker_task = partial(process_doc, seg=SEG)
     with mp.Pool(processes=mp.cpu_count() - 2) as pool:
         results = list(
@@ -113,11 +107,12 @@ if __name__ == "__main__":
         )
 
     sentence_pool = [s for sublist in results for s in sublist]
-    print(f"Collected {len(sentence_pool):,} candidate sentences.")
+    logger.info("Collected %d candidate sentences.", len(sentence_pool))
 
-    with open(FILE_PATH, "w", encoding="utf-8") as f:
+    logger.info("Generating %d probes …", NUM_PROBES)
+    with open(FILE_PATH_PROBES, "w", encoding="utf-8") as f:
         for i in tqdm(range(NUM_PROBES), desc="Generating probes"):
             probe = make_probe(i, sentence_pool)
             f.write(json.dumps(probe.__dict__, ensure_ascii=False) + "\n")
 
-    print(f"Done → probes.jsonl ({NUM_PROBES} lines)")
+    logger.info("Done → probes.jsonl (%d lines)", NUM_PROBES)
