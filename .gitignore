@@ -17,3 +17,5 @@ top*.parquet
 top*.tsv
 bottom*.parquet
 bottom*.tsv
+
+data/pipeline.log
